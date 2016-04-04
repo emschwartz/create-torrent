@@ -28,6 +28,8 @@ var once = require('once')
 var parallel = require('run-parallel')
 var sha1 = require('simple-sha1')
 var stream = require('readable-stream')
+var through2 = require('through2')
+var paymentLicense = require('payment-license')
 
 /**
  * Create a torrent.
@@ -37,6 +39,7 @@ var stream = require('readable-stream')
  * @param  {Date=} opts.creationDate
  * @param  {string=} opts.comment
  * @param  {string=} opts.createdBy
+ * @param  {string|Object} opts.license
  * @param  {boolean|number=} opts.private
  * @param  {number=} opts.pieceLength
  * @param  {Array.<Array.<string>>=} opts.announceList
@@ -259,13 +262,46 @@ function notHidden (file) {
   return file[0] !== '.'
 }
 
-function getPieceList (files, pieceLength, cb) {
+function getPieceListAndLicense (files, pieceLength, cb) {
   cb = once(cb)
   var pieces = []
   var length = 0
 
+  var licenses = []
+  var remainingLicenses = files.length
+
   var streams = files.map(function (file) {
-    return file.getStream
+    var s = file.getStream()
+
+    var foundLicense = false
+    var chunks = []
+    var getLicense = through2(
+      function (chunk, encoding, callback) {
+        chunks.push(chunk)
+        var fullBuffer = Buffer.concat(chunks)
+        if (!foundLicense && paymentLicense.supportsFileType(fullBuffer)) {
+          paymentLicense.parseLicenseFromFile(fullBuffer)
+            .then(function (license) {
+              if (license) {
+                foundLicense = true
+                licenses.push(license)
+                remainingLicenses--
+                maybeDone()
+              }
+            })
+        }
+        callback(null, chunk)
+      },
+      function (callback) {
+        if (!foundLicense) {
+          remainingLicenses--
+        }
+        callback()
+      })
+
+    return function () {
+      return s.pipe(getLicense)
+    }
   })
 
   var remainingHashes = 0
@@ -314,9 +350,9 @@ function getPieceList (files, pieceLength, cb) {
   }
 
   function maybeDone () {
-    if (ended && remainingHashes === 0) {
+    if (ended && remainingHashes === 0 && remainingLicenses === 0) {
       cleanup()
-      cb(null, new Buffer(pieces.join(''), 'hex'), length)
+      cb(null, new Buffer(pieces.join(''), 'hex'), length, licenses)
     }
   }
 }
@@ -377,10 +413,12 @@ function onFiles (files, opts, cb) {
 
   if (opts.urlList !== undefined) torrent['url-list'] = opts.urlList
 
+  if (opts.license !== undefined) torrent.info.license = opts.license
+
   var pieceLength = opts.pieceLength || calcPieceLength(files.reduce(sumLength, 0))
   torrent.info['piece length'] = pieceLength
 
-  getPieceList(files, pieceLength, function (err, pieces, torrentLength) {
+  getPieceListAndLicense(files, pieceLength, function (err, pieces, torrentLength, licenses) {
     if (err) return cb(err)
     torrent.info.pieces = pieces
 
@@ -392,6 +430,19 @@ function onFiles (files, opts, cb) {
       torrent.info.length = torrentLength
     } else {
       torrent.info.files = files
+    }
+
+    if (licenses && licenses.length > 0) {
+      torrent.info.license = licenses[0]
+
+      // Don't allow multiple different licenses
+      var license = licenses[0]
+      for (var index = 1; index < licenses.length; index++) {
+        if (licenses[index] !== license) {
+          cb(new Error('Cannot combine multiple files with different licenses into one torrent: ' + licenses.join('\n')))
+          return
+        }
+      }
     }
 
     cb(null, bencode.encode(torrent))

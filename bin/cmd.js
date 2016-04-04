@@ -21,7 +21,8 @@ var argv = minimist(process.argv.slice(2), {
     'comment',
     'createdBy',
     'announce',
-    'urlList'
+    'urlList',
+    'license'
   ],
   default: {
     createdBy: 'WebTorrent <https://webtorrent.io>'
@@ -53,6 +54,7 @@ if (!infile || argv.help) {
   console.log('--pieceLength    Piece length [number] [default: reasonable length]')
   console.log('--announce       Tracker url [string] [default: reasonable trackers]')
   console.log('--urlList        Web seed url [string]')
+  console.log('--license        License [string]')
   console.log('')
   process.exit(0)
 }
