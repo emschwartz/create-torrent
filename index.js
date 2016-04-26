@@ -282,7 +282,7 @@ function getPieceListAndLicense (files, pieceLength, cb) {
         if (!foundLicense && paymentLicense.supportsFileType(fullBuffer)) {
           paymentLicense.parseLicenseFromFile(fullBuffer)
             .then(function (license) {
-              if (license) {
+              if (!foundLicense && license) {
                 foundLicense = true
                 licenses.push(license)
                 remainingLicenses--
