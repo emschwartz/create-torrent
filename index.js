@@ -271,36 +271,37 @@ function getPieceListAndLicense (files, pieceLength, cb) {
   var remainingLicenses = files.length
 
   var streams = files.map(function (file) {
-    var s = file.getStream()
-
     var foundLicense = false
-    var chunks = []
+    var buf = new Buffer(0)
+    function checkFoundLicense (license) {
+      if (!foundLicense && license) {
+        foundLicense = true
+        licenses.push(license)
+        remainingLicenses -= 1
+        maybeDone()
+      }
+    }
     var getLicense = through2(
       function (chunk, encoding, callback) {
-        chunks.push(chunk)
-        var fullBuffer = Buffer.concat(chunks)
-        if (!foundLicense && paymentLicense.supportsFileType(fullBuffer)) {
-          paymentLicense.parseLicenseFromFile(fullBuffer)
-            .then(function (license) {
-              if (!foundLicense && license) {
-                foundLicense = true
-                licenses.push(license)
-                remainingLicenses--
-                maybeDone()
-              }
-            })
+        if (!foundLicense) {
+          buf = Buffer.concat([buf, chunk])
+          if (paymentLicense.supportsFileType(buf)) {
+            paymentLicense.parseLicenseFromFile(buf)
+              .then(checkFoundLicense)
+          }
         }
         callback(null, chunk)
       },
       function (callback) {
+        // This file just doesn't have a license
         if (!foundLicense) {
-          remainingLicenses--
+          remainingLicenses -= 1
         }
         callback()
       })
 
     return function () {
-      return s.pipe(getLicense)
+      return file.getStream().pipe(getLicense)
     }
   })
 
