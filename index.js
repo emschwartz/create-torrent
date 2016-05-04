@@ -281,16 +281,27 @@ function getPieceListAndLicense (files, pieceLength, cb) {
         maybeDone()
       }
     }
+    // TODO this way of parsing the license is inefficient and pretty hacky
+    // we should instead make the payment-license library support parsing from streams
     var getLicense = through2(
       function (chunk, encoding, callback) {
-        if (!foundLicense) {
-          buf = Buffer.concat([buf, chunk])
-          if (paymentLicense.supportsFileType(buf)) {
-            paymentLicense.parseLicenseFromFile(buf)
-              .then(checkFoundLicense)
-          }
+        if (foundLicense) {
+          return callback(null, chunk)
         }
-        callback(null, chunk)
+        buf = Buffer.concat([buf, chunk])
+        if (paymentLicense.supportsFileType(buf)) {
+          paymentLicense.parseLicenseFromFile(buf)
+            .then(checkFoundLicense)
+            .catch(function () {
+              // Errors just mean we couldn't read the license from the buffer yet
+              return Promise.resolve()
+            })
+            .then(function () {
+              // Only call the callback after we've checked whether the part of
+              // the buffer loaded thus far has the license in it
+              callback(null, chunk)
+            })
+        }
       },
       function (callback) {
         // This file just doesn't have a license
