@@ -28,7 +28,6 @@ var once = require('once')
 var parallel = require('run-parallel')
 var sha1 = require('simple-sha1')
 var stream = require('readable-stream')
-var through2 = require('through2')
 var paymentLicense = require('payment-license')
 
 /**
@@ -270,49 +269,18 @@ function getPieceListAndLicense (files, pieceLength, cb) {
   var licenses = []
   var remainingLicenses = files.length
 
-  var streams = files.map(function (file) {
-    var foundLicense = false
-    var buf = new Buffer(0)
-    function checkFoundLicense (license) {
-      if (!foundLicense && license) {
-        foundLicense = true
+  function parseLicense () {
+    return paymentLicense.parseLicenseStream(function (license) {
+      if (license) {
         licenses.push(license)
-        remainingLicenses -= 1
-        maybeDone()
       }
-    }
-    // TODO this way of parsing the license is inefficient and pretty hacky
-    // we should instead make the payment-license library support parsing from streams
-    var getLicense = through2(
-      function (chunk, encoding, callback) {
-        if (foundLicense) {
-          return callback(null, chunk)
-        }
-        buf = Buffer.concat([buf, chunk])
-        if (paymentLicense.supportsFileType(buf)) {
-          paymentLicense.parseLicenseFromFile(buf)
-            .then(checkFoundLicense)
-            .catch(function () {
-              // Errors just mean we couldn't read the license from the buffer yet
-              return Promise.resolve()
-            })
-            .then(function () {
-              // Only call the callback after we've checked whether the part of
-              // the buffer loaded thus far has the license in it
-              callback(null, chunk)
-            })
-        }
-      },
-      function (callback) {
-        // This file just doesn't have a license
-        if (!foundLicense) {
-          remainingLicenses -= 1
-        }
-        callback()
-      })
+      remainingLicenses -= 1
+    })
+  }
 
+  var streams = files.map(function (file) {
     return function () {
-      return file.getStream().pipe(getLicense)
+      return file.getStream().pipe(parseLicense())
     }
   })
 
